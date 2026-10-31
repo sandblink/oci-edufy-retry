@@ -1,0 +1,60 @@
+name: Retry OCI stack apply
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: oci-retry
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_CLI_REGION: ap-mumbai-1
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      STACK_ID: ${{ secrets.STACK_ID }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Install OCI CLI
+        run: pip install --quiet oci-cli
+
+      - name: Try to apply the stack (5 attempts, 5 min apart)
+        run: |
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i at $(date -u)"
+            JOB=$(oci resource-manager job create-apply-job \
+                    --stack-id "$STACK_ID" \
+                    --execution-plan-strategy AUTO_APPROVED \
+                    --query 'data.id' --raw-output) || JOB=""
+            if [ -n "$JOB" ]; then
+              STATE=ACCEPTED
+              while [ "$STATE" = "ACCEPTED" ] || [ "$STATE" = "IN_PROGRESS" ]; do
+                sleep 15
+                STATE=$(oci resource-manager job get --job-id "$JOB" \
+                          --query 'data."lifecycle-state"' --raw-output)
+              done
+              echo "Result: $STATE"
+              if [ "$STATE" = "SUCCEEDED" ]; then
+                echo "Instance created. Disabling this workflow."
+                gh workflow disable retry.yml
+                exit 0
+              fi
+            else
+              echo "Request was refused, will retry"
+            fi
+            [ "$i" -lt 5 ] && sleep 300
+          done
+          echo "No capacity this round."
