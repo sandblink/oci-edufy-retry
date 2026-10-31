@@ -16,7 +16,7 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 32
     env:
       OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
       OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
@@ -31,9 +31,9 @@ jobs:
       - name: Install OCI CLI
         run: pip install --quiet oci-cli
 
-      - name: Try to apply the stack (5 attempts, 5 min apart)
+      - name: Try to apply the stack (8 attempts, 2 min apart)
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8; do
             echo "Attempt $i at $(date -u)"
             JOB=$(oci resource-manager job create-apply-job \
                     --stack-id "$STACK_ID" \
@@ -55,6 +55,6 @@ jobs:
             else
               echo "Request was refused, will retry"
             fi
-            [ "$i" -lt 5 ] && sleep 300
+            [ "$i" -lt 8 ] && sleep 120
           done
           echo "No capacity this round."
