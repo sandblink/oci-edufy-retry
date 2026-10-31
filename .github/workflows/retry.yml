@@ -16,7 +16,7 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 32
+    timeout-minutes: 45
     env:
       OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
       OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
@@ -31,14 +31,15 @@ jobs:
       - name: Install OCI CLI
         run: pip install --quiet oci-cli
 
-      - name: Try to apply the stack (8 attempts, 2 min apart)
+      - name: Try to apply the stack (5 attempts, 5 min apart, 10 min backoff if throttled)
         run: |
-          for i in 1 2 3 4 5 6 7 8; do
+          for i in 1 2 3 4 5; do
             echo "Attempt $i at $(date -u)"
+            WAIT=300
             JOB=$(oci resource-manager job create-apply-job \
                     --stack-id "$STACK_ID" \
                     --execution-plan-strategy AUTO_APPROVED \
-                    --query 'data.id' --raw-output) || JOB=""
+                    --query 'data.id' --raw-output 2>err.txt) || JOB=""
             if [ -n "$JOB" ]; then
               STATE=ACCEPTED
               while [ "$STATE" = "ACCEPTED" ] || [ "$STATE" = "IN_PROGRESS" ]; do
@@ -53,8 +54,13 @@ jobs:
                 exit 0
               fi
             else
-              echo "Request was refused, will retry"
+              if grep -q TooManyRequests err.txt; then
+                echo "Throttled by Oracle (429). Backing off 10 minutes."
+                WAIT=600
+              else
+                echo "Request refused:"; cat err.txt
+              fi
             fi
-            [ "$i" -lt 8 ] && sleep 120
+            [ "$i" -lt 5 ] && sleep $WAIT
           done
           echo "No capacity this round."
